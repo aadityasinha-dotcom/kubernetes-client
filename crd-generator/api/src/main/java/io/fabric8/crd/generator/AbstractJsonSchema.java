@@ -22,26 +22,27 @@ import io.fabric8.kubernetes.api.model.Duration;
 import io.fabric8.kubernetes.api.model.IntOrString;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.sundr.builder.internal.functions.TypeAs;
-import io.sundr.codegen.functions.ClassTo;
-import io.sundr.model.AnnotationRef;
-import io.sundr.model.ClassRef;
-import io.sundr.model.Method;
-import io.sundr.model.PrimitiveRefBuilder;
-import io.sundr.model.Property;
-import io.sundr.model.TypeDef;
-import io.sundr.model.TypeRef;
+import io.sundr.model.*;
 import io.sundr.utils.Strings;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.*;
+
+import static io.sundr.model.utils.Types.BOOLEAN;
+import static io.sundr.model.utils.Types.BOOLEAN_REF;
+
+import static io.sundr.model.utils.Types.STRING;
+import static io.sundr.model.utils.Types.STRING_REF;
+
+import static io.sundr.model.utils.Types.INT;
+import static io.sundr.model.utils.Types.INT_REF;
+
+import static io.sundr.model.utils.Types.LONG;
+import static io.sundr.model.utils.Types.LONG_REF;
+
+import static io.sundr.model.utils.Types.DOUBLE;
+import static io.sundr.model.utils.Types.DOUBLE_REF;
 
 /**
  * Encapsulates the common logic supporting OpenAPI schema generation for CRD generation.
@@ -53,27 +54,16 @@ public abstract class AbstractJsonSchema<T, B> {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(AbstractJsonSchema.class);
 
-  protected static final TypeDef QUANTITY = ClassTo.TYPEDEF.apply(Quantity.class);
-  protected static final TypeDef DURATION = ClassTo.TYPEDEF.apply(Duration.class);
-  protected static final TypeDef INT_OR_STRING = ClassTo.TYPEDEF.apply(IntOrString.class);
+  protected static final TypeDef QUANTITY = TypeDef.forName(Quantity.class.getName());
+  protected static final TypeDef DURATION = TypeDef.forName(Duration.class.getName());
+  protected static final TypeDef INT_OR_STRING =TypeDef.forName(IntOrString.class.getName());  
 
-
-  protected static final TypeDef BOOLEAN = ClassTo.TYPEDEF.apply(Boolean.class);
-  protected static final TypeDef STRING = ClassTo.TYPEDEF.apply(String.class);
-  protected static final TypeDef INT = ClassTo.TYPEDEF.apply(Integer.class);
-  protected static final TypeDef LONG = ClassTo.TYPEDEF.apply(Long.class);
-  protected static final TypeDef DOUBLE = ClassTo.TYPEDEF.apply(Double.class);
-  protected static final TypeDef DATE = ClassTo.TYPEDEF.apply(Date.class);
   protected static final TypeRef QUANTITY_REF = QUANTITY.toReference();
   protected static final TypeRef DURATION_REF = DURATION.toReference();
   protected static final TypeRef INT_OR_STRING_REF = INT_OR_STRING.toReference();
 
 
-  protected static final TypeRef BOOLEAN_REF = BOOLEAN.toReference();
-  protected static final TypeRef STRING_REF = STRING.toReference();
-  protected static final TypeRef INT_REF = INT.toReference();
-  protected static final TypeRef LONG_REF = LONG.toReference();
-  protected static final TypeRef DOUBLE_REF = DOUBLE.toReference();
+  protected static final TypeDef DATE = TypeDef.forName(Date.class.getName());
   protected static final TypeRef DATE_REF = DATE.toReference();
 
   private static final String INT_OR_STRING_MARKER = "int_or_string";
@@ -89,6 +79,8 @@ public abstract class AbstractJsonSchema<T, B> {
 
   private static final Map<TypeRef, String> COMMON_MAPPINGS = new HashMap<>();
   public static final String ANNOTATION_JSON_PROPERTY = "com.fasterxml.jackson.annotation.JsonProperty";
+  public static final String ANNOTATION_JSON_PROPERTY_DESCRIPTION = "com.fasterxml.jackson.annotation.JsonPropertyDescription";
+  public static final String ANNOTATION_NOT_NULL = "javax.validation.constraints.NotNull";
 
   static {
     COMMON_MAPPINGS.put(STRING_REF, STRING_MARKER);
@@ -121,7 +113,7 @@ public abstract class AbstractJsonSchema<T, B> {
    * sub-classes are supposed to provide specific implementations of abstract methods.
    *
    * @param definition The definition.
-   * @param ignore a potentially empty list of property names to ignore while generating the schema
+   * @param ignore     a potentially empty list of property names to ignore while generating the schema
    * @return The schema.
    */
   protected T internalFrom(TypeDef definition, String... ignore) {
@@ -131,59 +123,207 @@ public abstract class AbstractJsonSchema<T, B> {
         .emptySet();
     List<String> required = new ArrayList<>();
 
-    final List<Method> methods = definition.getMethods();
+    // index potential accessors by name for faster lookup
+    final Map<String, Method> accessors = indexPotentialAccessors(definition);
 
     for (Property property : definition.getProperties()) {
-      final String name = property.getName();
-      final Property[] updated = new Property[1];
-
+      String name = property.getName();
       if (property.isStatic() || ignores.contains(name)) {
         LOGGER.debug("Ignoring property {}", name);
         continue;
       }
-      
-      property.getAnnotations().forEach(a -> {
-        switch(a.getClassRef().getFullyQualifiedName()) {
-          case "javax.validation.constraints.NotNull":
-            required.add(name);
-            break;
-          case ANNOTATION_JSON_PROPERTY:
-            updatePropertyFromAnnotationIfNeeded(property, name, updated, a);
-            break;
-        }
-      });
 
-      // only check accessors if the property itself hasn't already been annotated
-      if (updated[0] == null) {
-        // check if accessors are annotated with JsonProperty with a different name
-        methods.stream()
-          .filter(m -> m.getName().matches("(is|get|set)" + property.getNameCapitalized()))
-          .forEach(m -> m.getAnnotations().stream()
-            // check if accessor is annotated with JsonProperty
-            .filter(a -> a.getClassRef().getFullyQualifiedName().equals(ANNOTATION_JSON_PROPERTY))
-            .findAny()
-            // if we found an annotated accessor, override the property's name if needed
-            .ifPresent(a -> updatePropertyFromAnnotationIfNeeded(property, name, updated, a))
-          );
-      } else {
-        LOGGER.debug("Property {} has already been renamed to {} by field annotation", name, updated[0].getName());
+      final PropertyFacade facade = new PropertyFacade(property, accessors);
+      final Property possiblyRenamedProperty = facade.process();
+      name = possiblyRenamedProperty.getName();
+
+      if (facade.required) {
+        required.add(name);
       }
-
-      final Property possiblyRenamedProperty = updated[0] != null ? updated[0] : property;
-      addProperty(possiblyRenamedProperty, builder, internalFrom(possiblyRenamedProperty.getName(),
-        possiblyRenamedProperty.getTypeRef()));
+      final T schema = internalFrom(name, possiblyRenamedProperty.getTypeRef());
+      // if we got a description from the field or an accessor, use it
+      final String description = facade.description;
+      final T possiblyUpdatedSchema;
+      if (description == null) {
+        possiblyUpdatedSchema = schema;
+      } else {
+        possiblyUpdatedSchema = addDescription(schema, description);
+      }
+      addProperty(possiblyRenamedProperty, builder, possiblyUpdatedSchema);
     }
     return build(builder, required);
   }
 
-  private void updatePropertyFromAnnotationIfNeeded(Property property, String name, Property[] updated,
-    AnnotationRef a) {
-    final String fromAnnotation = (String) a.getParameters().get("value");
-    if (!Strings.isNullOrEmpty(fromAnnotation) && !name.equals(fromAnnotation)) {
-      updated[0] = new Property(property.getAnnotations(), property.getTypeRef(), fromAnnotation,
-        property.getComments(),
-        property.getModifiers(), property.getAttributes());
+  private Map<String, Method> indexPotentialAccessors(TypeDef definition) {
+    final List<Method> methods = definition.getMethods();
+    final Map<String, Method> accessors = new HashMap<>(methods.size());
+    methods.stream()
+      .filter(this::isPotentialAccessor)
+      .forEach(m -> accessors.put(m.getName(), m));
+    return accessors;
+  }
+
+
+  private static class PropertyOrAccessor {
+    private final Collection<AnnotationRef> annotations;
+    private final String name;
+    private final String propertyName;
+    private final String type;
+    private String renamedTo;
+    private boolean required;
+    private String description;
+
+    private PropertyOrAccessor(Collection<AnnotationRef> annotations, String name, String propertyName, boolean isMethod) {
+      this.annotations = annotations;
+      this.name = name;
+      this.propertyName = propertyName;
+      type = isMethod ? "accessor" : "field";
     }
+
+    static PropertyOrAccessor fromProperty(Property property) {
+      return new PropertyOrAccessor(property.getAnnotations(), property.getName(), property.getName(), false);
+    }
+
+    static PropertyOrAccessor fromMethod(Method method, String propertyName) {
+      return new PropertyOrAccessor(method.getAnnotations(), method.getName(), propertyName, true);
+    }
+
+    public void process() {
+      annotations.forEach(a -> {
+        switch (a.getClassRef().getFullyQualifiedName()) {
+          case ANNOTATION_NOT_NULL:
+            required = true;
+            break;
+          case ANNOTATION_JSON_PROPERTY:
+            final String nameFromAnnotation = (String) a.getParameters().get("value");
+            if (!Strings.isNullOrEmpty(nameFromAnnotation) && !propertyName.equals(nameFromAnnotation)) {
+              renamedTo = nameFromAnnotation;
+            }
+            break;
+          case ANNOTATION_JSON_PROPERTY_DESCRIPTION:
+            final String descriptionFromAnnotation = (String) a.getParameters().get("value");
+            if (!Strings.isNullOrEmpty(descriptionFromAnnotation)) {
+              description = descriptionFromAnnotation;
+            }
+            break;
+        }
+      });
+    }
+
+    public String getRenamedTo() {
+      return renamedTo;
+    }
+
+    public boolean isRequired() {
+      return required;
+    }
+
+    public String getDescription() {
+      return description;
+    }
+
+    public boolean contributeName() {
+      return renamedTo != null;
+    }
+
+    public boolean contributeDescription() {
+      return description != null;
+    }
+
+    @Override
+    public String toString() {
+      return "'" + name + "' " + type;
+    }
+  }
+
+  private static class PropertyFacade {
+    private final List<PropertyOrAccessor> propertyOrAccessors = new ArrayList<>(4);
+    private String renamedTo;
+    private String description;
+    private boolean required;
+    private final Property original;
+    private String nameContributedBy;
+    private String descriptionContributedBy;
+
+    public PropertyFacade(Property property, Map<String, Method> potentialAccessors) {
+      original = property;
+      final String capitalized = property.getNameCapitalized();
+      final String name = property.getName();
+      propertyOrAccessors.add(PropertyOrAccessor.fromProperty(property));
+      Method method = potentialAccessors.get("is" + capitalized);
+      if (method != null) {
+        propertyOrAccessors.add(PropertyOrAccessor.fromMethod(method, name));
+      }
+      method = potentialAccessors.get("get" + capitalized);
+      if (method != null) {
+        propertyOrAccessors.add(PropertyOrAccessor.fromMethod(method, name));
+      }
+      method = potentialAccessors.get("set" + capitalized);
+      if (method != null) {
+        propertyOrAccessors.add(PropertyOrAccessor.fromMethod(method, name));
+      }
+    }
+
+    public Property process() {
+      final String name = original.getName();
+
+      propertyOrAccessors.forEach(p -> {
+        p.process();
+        final String contributorName = p.toString();
+        if (p.contributeName()) {
+          if (renamedTo == null) {
+            renamedTo = p.getRenamedTo();
+            this.nameContributedBy = contributorName;
+          } else {
+            LOGGER.debug("Property {} has already been renamed to {} by {}", name, renamedTo, nameContributedBy);
+          }
+        }
+
+        if (p.contributeDescription()) {
+          if (description == null) {
+            description = p.getDescription();
+            descriptionContributedBy = contributorName;
+          } else {
+            LOGGER.debug("Description for property {} has already been contributed by: {}", name, descriptionContributedBy);
+          }
+        }
+
+        if (p.isRequired()) {
+          required = true;
+        }
+      });
+      
+      return renamedTo != null ? new Property(original.getAnnotations(), original.getTypeRef(), renamedTo,
+        original.getComments(), original.getModifiers(), original.getAttributes()) : original;
+    }
+  }
+
+  private boolean isPotentialAccessor(Method method) {
+    final String name = method.getName();
+    return name.startsWith("is") || name.startsWith("get") || name.startsWith("set");
+  }
+
+  /**
+   * Retrieves the updated property name for the specified property if its annotations warrant it
+   *
+   * @param property the Property which name might need to be updated
+   * @return the updated property name or its original one if it didn't need to be changed
+   */
+  private String extractUpdatedNameFromJacksonPropertyIfPresent(Property property) {
+    final String name = property.getName();
+    return property.getAnnotations().stream()
+      // only consider JsonProperty annotation
+      .filter(a -> a.getClassRef().getFullyQualifiedName().equals(ANNOTATION_JSON_PROPERTY))
+      .findAny()
+      // if we found an annotated accessor, override the property's name if needed
+      .map(a -> {
+        final String fromAnnotation = (String) a.getParameters().get("value");
+        if (!Strings.isNullOrEmpty(fromAnnotation) && !name.equals(fromAnnotation)) {
+          return fromAnnotation;
+        } else {
+          return name;
+        }
+      }).orElse(property.getName());
   }
 
   /**
@@ -198,8 +338,8 @@ public abstract class AbstractJsonSchema<T, B> {
    * to create the property schema.
    *
    * @param property the property to add to the currently being built schema
-   * @param builder the builder representing the schema being built
-   * @param schema the built schema for the property being added
+   * @param builder  the builder representing the schema being built
+   * @param schema   the built schema for the property being added
    */
   public abstract void addProperty(Property property, B builder, T schema);
 
@@ -207,7 +347,7 @@ public abstract class AbstractJsonSchema<T, B> {
    * Finishes up the process by actually building the final JSON schema based on the provided
    * builder and a potentially empty list of names of fields which should be marked as required
    *
-   * @param builder the builder used to build the final schema
+   * @param builder  the builder used to build the final schema
    * @param required the list of names of required fields
    * @return the built JSON schema
    */
@@ -216,7 +356,7 @@ public abstract class AbstractJsonSchema<T, B> {
   /**
    * Builds the specific JSON schema representing the structural schema for the specified property
    *
-   * @param name the name of the property which schema we want to build
+   * @param name    the name of the property which schema we want to build
    * @param typeRef the type of the property which schema we want to build
    * @return the structural schema associated with the specified property
    */
@@ -253,7 +393,7 @@ public abstract class AbstractJsonSchema<T, B> {
       return internalFrom(name, TypeAs.UNWRAP_OPTIONAL_OF.apply(typeRef));
     } else {
       final String typeName = COMMON_MAPPINGS.get(typeRef);
-      if(typeName != null) { // we have a type that we handle specifically
+      if (typeName != null) { // we have a type that we handle specifically
         if (INT_OR_STRING_MARKER.equals(typeName)) { // Handle int or string mapped types
           return mappedProperty(typeRef);
         } else {
@@ -265,9 +405,9 @@ public abstract class AbstractJsonSchema<T, B> {
           TypeDef def = Types.typeDefFrom(classRef);
 
           // check if we're dealing with an enum
-          if(def.isEnum()) {
+          if (def.isEnum()) {
             final JsonNode[] enumValues = def.getProperties().stream()
-              .map(Property::getName)
+              .map(this::extractUpdatedNameFromJacksonPropertyIfPresent)
               .filter(n -> !n.startsWith("$"))
               .map(JsonNodeFactory.instance::textNode)
               .toArray(JsonNode[]::new);
@@ -314,4 +454,6 @@ public abstract class AbstractJsonSchema<T, B> {
   protected abstract T singleProperty(String typeName);
 
   protected abstract T enumProperty(JsonNode... enumValues);
+
+  protected abstract T addDescription(T schema, String description);
 }

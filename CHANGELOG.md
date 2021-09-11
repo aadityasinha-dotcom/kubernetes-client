@@ -3,14 +3,36 @@
 ### 5.8-SNAPSHOT
 
 #### Bugs
-
 #### Improvements
+#### Dependency Upgrade
+#### New Features
+#### _**Note**_: Breaking changes in the API
+
+### 5.7.3 (2021-09-09)
+
+#### Bugs
+* Fix #3433: Extension annotator doesn't generate XxxEditable classes
+* Fix #3450: CRD generator fails with ClassCastException in some cases
+* Fix #3442: make sure new CRDGenerator instances start with a clean generation context
 
 #### Dependency Upgrade
+* Fix #3438: Upgrade Sundrio to 0.50.1
 
-#### New Features
+### 5.7.2 (2021-09-02)
 
-#### _**Note**_: Breaking changes in the API
+#### Dependency Upgrade
+* Fix #3441: Revert #3427 bump jandex from 2.3.1.Final to 2.4.0.Final
+
+### 5.7.1 (2021-09-01)
+
+#### Bugs
+* Fix #3411: enum values should honor JsonProperty annotations during CRD generation
+* Fix #3431: required list properly uses renamed properties during CRD generation
+* Fix #3429: KubernetesCrudDispatcher throw ConcurrentModificationException when using WatchEventsListener
+
+#### Improvements
+* Fix #3414: Add equals and hashCode implementations for CustomResource
+* Fix #3287: Add support for field descriptions in CRD Generator
 
 ### 5.7.0 (2021-08-12)
 
