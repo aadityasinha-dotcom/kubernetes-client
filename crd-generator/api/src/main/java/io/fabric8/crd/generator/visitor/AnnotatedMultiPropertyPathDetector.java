@@ -19,6 +19,7 @@ import io.fabric8.crd.generator.utils.Types;
 import io.sundr.builder.TypedVisitor;
 import io.sundr.model.ClassRef;
 import io.sundr.model.Property;
+import io.sundr.model.AnnotationRef;
 import io.sundr.model.TypeDef;
 import io.sundr.model.TypeDefBuilder;
 import java.util.ArrayList;
@@ -63,7 +64,7 @@ public class AnnotatedMultiPropertyPathDetector extends TypedVisitor<TypeDefBuil
         }
 
         List<Property> newParents = new ArrayList<>(parents);
-        boolean match = p.getAnnotations().stream().anyMatch(a -> a.getClassRef().getName().equals(annotationName));
+        boolean match = p.getAnnotations().stream().anyMatch(AnnotationRef::getClassRef.getName.equals(annotationName));
         if (match) {
           newParents.add(p);
           this.properties

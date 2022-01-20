@@ -21,6 +21,7 @@ import io.sundr.model.ClassRef;
 import io.sundr.model.Property;
 import io.sundr.model.TypeDef;
 import io.sundr.model.TypeDefBuilder;
+import io.sundr.model.AnnotationRef;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -62,7 +63,7 @@ public class AnnotatedPropertyPathDetector extends TypedVisitor<TypeDefBuilder> 
         }
 
         List<Property> newParents = new ArrayList<>(parents);
-        boolean match = p.getAnnotations().stream().anyMatch(a -> a.getClassRef().getName().equals(annotationName));
+        boolean match = p.getAnnotations().stream().anyMatch(AnnotationRef::getClassRef.getName.equals(annotationName));
         if (match) {
           newParents.add(p);
           reference.set(Optional.of(newParents.stream().map(Property::getName).collect(Collectors.joining(DOT, prefix, ""))));
