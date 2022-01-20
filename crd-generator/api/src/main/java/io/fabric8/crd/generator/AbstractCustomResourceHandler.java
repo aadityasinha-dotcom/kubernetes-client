@@ -75,7 +75,7 @@ public abstract class AbstractCustomResourceHandler {
     Map<String, Property> additionalPrinterColumns = new HashMap<>(additionalPrinterColumnDetector.getProperties());
     additionalPrinterColumns.forEach((path, property) -> {
       Map<String, Object> parameters = property.getAnnotations().stream()
-      .filter(a -> a.getClassRef().getName().equals("PrinterColumn")).map(AnnotationRef::getParameters)
+      .filter(AnnotationRef::getClassRef().getName().equals("PrinterColumn")).map(AnnotationRef::getParameters)
         .findFirst().orElse(Collections.emptyMap());
       String type = AbstractJsonSchema.getSchemaTypeFor(property.getTypeRef());
       String column = (String) parameters.get("name");
